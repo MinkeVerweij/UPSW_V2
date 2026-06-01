@@ -21,6 +21,8 @@ dependencies:
   - alphashape
   - aiohttp
   - aiofiles
+  - pdal
+  - python-pdal
   - requests
   - tqdm
   - ipywidgets
