@@ -19,6 +19,8 @@ dependencies:
   - laspy
   - lazrs-python        # LAZ compression support for laspy
   - alphashape
+  - aiohttp
+  - aiofiles
   - requests
   - tqdm
   - ipywidgets
