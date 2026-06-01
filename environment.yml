@@ -1,10 +1,33 @@
-name: pdal_env
+name: upsw
 channels:
   - conda-forge
+  - pytorch
   - defaults
 dependencies:
   - python=3.11
   - ipykernel
-  - pdal
-  - python-pdal
-prefix: C:\Users\vishr\anaconda3\envs\pdal_env
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - geopandas
+  - shapely
+  - pyproj
+  - rasterio
+  - laspy
+  - lazrs-python        # LAZ compression support for laspy
+  - alphashape
+  - requests
+  - tqdm
+  - ipywidgets
+  - nest-asyncio
+  - datashader
+  - numba
+  - pyntcloud
+  - timm
+  - pytorch             # CPU build; replace with pytorch-cuda=12.1 for GPU
+  - pip
+  - pip:
+    - laspy[lazrs]      # ensures lazrs backend is registered
