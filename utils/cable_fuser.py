@@ -4,18 +4,11 @@ import logging
 import warnings
 import numpy as np
 
-# np.ndarray.ptp() was removed in NumPy 2.0; pyntcloud's voxelgrid still uses it.
-if not hasattr(np.ndarray, 'ptp'):
-    np.ndarray.ptp = lambda self, axis=None, **kw: (
-        self.max(axis=axis) - self.min(axis=axis)
-    )
-
 from .ahn_reader import FastGridInterpolator
 from .clipping_tools import poly_clip, compute_bounding_box, minimum_bounding_rectangle
 
 import open3d as o3d
 import pandas as pd
-from pyntcloud import PyntCloud
 from shapely.geometry import Polygon, LineString
 from shapely.ops import unary_union
 from scipy import ndimage
@@ -46,14 +39,38 @@ def get_polygon_from_tile_code(tilecode, padding=0, width=50, height=50):
                     (x_max, y_max), (x_max, y_min)])
 
 
+class _VoxelGrid:
+    """Pure-numpy voxelgrid replacing pyntcloud.VoxelGrid (NumPy 2.0 safe)."""
+
+    def __init__(self, points, size):
+        pts = np.asarray(points, dtype=np.float64)
+        xyzmin = pts.min(0)
+        xyzmax = pts.max(0)
+        self.sizes = np.array([size, size, size])
+        nx = max(1, int(np.ceil((xyzmax[0] - xyzmin[0]) / size)))
+        ny = max(1, int(np.ceil((xyzmax[1] - xyzmin[1]) / size)))
+        nz = max(1, int(np.ceil((xyzmax[2] - xyzmin[2]) / size)))
+        self._shape = (nx, ny, nz)
+        xi = np.clip(((pts[:, 0] - xyzmin[0]) / size).astype(int), 0, nx - 1)
+        yi = np.clip(((pts[:, 1] - xyzmin[1]) / size).astype(int), 0, ny - 1)
+        zi = np.clip(((pts[:, 2] - xyzmin[2]) / size).astype(int), 0, nz - 1)
+        self.voxel_n = np.ravel_multi_index([xi, yi, zi], (nx, ny, nz))
+        gx, gy, gz = np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz),
+                                  indexing='ij')
+        self.voxel_centers = np.column_stack([
+            xyzmin[0] + (gx.ravel() + 0.5) * size,
+            xyzmin[1] + (gy.ravel() + 0.5) * size,
+            xyzmin[2] + (gz.ravel() + 0.5) * size,
+        ])
+
+    def get_feature_vector(self):
+        fv = np.zeros(self._shape, dtype=bool)
+        fv.flat[np.unique(self.voxel_n)] = True
+        return fv
+
+
 def voxelize(points, voxel_size):
-    cloud = PyntCloud(pd.DataFrame(points, columns=['x', 'y', 'z']))
-    voxelgrid_id = cloud.add_structure(
-        "voxelgrid",
-        size_x=voxel_size, size_y=voxel_size, size_z=voxel_size,
-        regular_bounding_box=False,
-    )
-    voxel_grid = cloud.structures[voxelgrid_id]
+    voxel_grid = _VoxelGrid(points, voxel_size)
     voxel_centers = voxel_grid.voxel_centers[np.unique(voxel_grid.voxel_n)]
     inv_voxel_idx = np.unique(voxel_grid.voxel_n, return_inverse=True)[1]
     return voxel_grid, voxel_centers, inv_voxel_idx
