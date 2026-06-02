@@ -57,15 +57,41 @@ class BGTPolyReader:
         with open(path) as f:
             raw = json.load(f)
         self._polygons = []
-        for item in raw:
-            coords = item.get('coords', [])
-            if len(coords) >= 3:
-                try:
-                    poly = Polygon(coords)
-                    if poly.is_valid and not poly.is_empty:
-                        self._polygons.append(poly)
-                except Exception:
-                    pass
+        # Support both GeoJSON FeatureCollection and plain list-of-coords formats
+        if isinstance(raw, dict) and raw.get('type') == 'FeatureCollection':
+            items = raw.get('features', [])
+        elif isinstance(raw, list):
+            items = raw
+        else:
+            items = []
+        for item in items:
+            if isinstance(item, dict) and 'geometry' in item:
+                # GeoJSON feature
+                geom = item.get('geometry') or {}
+                gtype = geom.get('type', '')
+                rings = []
+                if gtype == 'Polygon':
+                    rings = geom.get('coordinates', [])[:1]
+                elif gtype == 'MultiPolygon':
+                    rings = [p[0] for p in geom.get('coordinates', []) if p]
+                for ring in rings:
+                    if len(ring) >= 3:
+                        try:
+                            poly = Polygon(ring)
+                            if poly.is_valid and not poly.is_empty:
+                                self._polygons.append(poly)
+                        except Exception:
+                            pass
+            else:
+                # Legacy plain-list format with 'coords' key
+                coords = item.get('coords', []) if isinstance(item, dict) else []
+                if len(coords) >= 3:
+                    try:
+                        poly = Polygon(coords)
+                        if poly.is_valid and not poly.is_empty:
+                            self._polygons.append(poly)
+                    except Exception:
+                        pass
         logger.info(f'Loaded {len(self._polygons)} parkeervakken polygons.')
 
     def _get_tile_bbox(self, tilecode, padding=0):
