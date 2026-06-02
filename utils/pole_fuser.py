@@ -245,7 +245,7 @@ class BGTPoleFuser:
         for seed in seeds:
             cx, cy = seed[0], seed[1]
             if fast_z is not None:
-                ground_z = float(fast_z(np.array([[cx, cy]])))
+                ground_z = float(fast_z(np.array([[cx, cy]]))[0])
                 if np.isnan(ground_z):
                     ground_z = 0.0
             else:
@@ -326,7 +326,7 @@ class BGTPoleFuser:
         label_mask = np.zeros(len(points), dtype=bool)
         for seed in seeds:
             if fast_z is not None:
-                top = (float(fast_z(np.array([seed[:2]])))
+                top = (float(fast_z(np.array([seed[:2]]))[0])
                        + self.params['label_height'])
             else:
                 top = self.params['label_height']
