@@ -156,7 +156,7 @@ class BGTPoleFuser:
         seeds = []
         matches = {}
         for obj in point_objects:
-            ground_z = float(fast_z(np.array([obj]))) if fast_z else 0.0
+            ground_z = float(fast_z(np.array([obj]))[0]) if fast_z else 0.0
             if np.isnan(ground_z):
                 ground_z = 0.0
 
