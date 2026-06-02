@@ -4,6 +4,12 @@ import logging
 import warnings
 import numpy as np
 
+# np.ndarray.ptp() was removed in NumPy 2.0; pyntcloud's voxelgrid still uses it.
+if not hasattr(np.ndarray, 'ptp'):
+    np.ndarray.ptp = lambda self, axis=None, **kw: (
+        self.max(axis=axis) - self.min(axis=axis)
+    )
+
 from .ahn_reader import FastGridInterpolator
 from .clipping_tools import poly_clip, compute_bounding_box, minimum_bounding_rectangle
 
