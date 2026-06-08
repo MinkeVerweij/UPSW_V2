@@ -3,6 +3,8 @@ from scipy.interpolate import RegularGridInterpolator
 from shapely.geometry import Polygon
 import logging
 
+from .lcc import LabelConnectedComp
+
 logger = logging.getLogger(__name__)
 
 
@@ -10,12 +12,31 @@ class NPZAHNFuser:
     """
     NPZ-based AHN fuser compatible with Pipeline.
     Uses grid-based connected component filtering instead of DBSCAN for speed.
+
+    Parameters
+    ----------
+    grow_facade : bool (default False)
+        Only active when ``target='building'``.  After the initial AHN-based
+        building label, runs a 3-D voxel LCC to grow the label into overhanging
+        facade elements (balconies, awnings, cornices) that lie above
+        ``facade_floor`` and are geometrically connected to already-labeled
+        building points.  Avoids merging street-level furniture (benches, bikes)
+        because those are below the floor cutoff.
+    facade_floor : float (default 1.5 m)
+        Height above ground below which points are excluded from the LCC
+        container.  Set to ≥ 1.5 m to keep benches and bicycles out.
+    facade_grid_size : float (default 0.25 m)
+        Voxel size for the LCC connectivity check.
+    facade_min_comp : int (default 20)
+        Minimum component size (points) to be included in the grow.
     """
 
     TARGETS = ('ground', 'building')
 
     def __init__(self, label, npz_reader, target='ground', epsilon=0.2,
-                 grid_size=0.4, min_comp_size=20):
+                 grid_size=0.4, min_comp_size=20,
+                 grow_facade=False, facade_floor=1.5,
+                 facade_grid_size=0.25, facade_min_comp=20):
         if target not in self.TARGETS:
             raise ValueError(f"Target must be one of {self.TARGETS}")
         self.label = label
@@ -24,6 +45,10 @@ class NPZAHNFuser:
         self.epsilon = epsilon
         self.grid_size = grid_size
         self.min_comp_size = min_comp_size
+        self.grow_facade = grow_facade and (target == 'building')
+        self.facade_floor = facade_floor
+        self.facade_grid_size = facade_grid_size
+        self.facade_min_comp = facade_min_comp
         self._load_surface()
 
     def _load_surface(self):
@@ -38,6 +63,14 @@ class NPZAHNFuser:
             bounds_error=False,
             fill_value=np.nan
         )
+
+        if self.grow_facade:
+            self.ground_interpolator = RegularGridInterpolator(
+                (self.y, self.x),
+                data['ground'],
+                bounds_error=False,
+                fill_value=np.nan
+            )
 
     def _grid_connected_components(self, points_xy):
         """
@@ -65,6 +98,49 @@ class NPZAHNFuser:
             if len(indices) >= self.min_comp_size:
                 cluster_mask[indices] = True
         return cluster_mask
+
+    def _grow_facade(self, points, labels):
+        """
+        Expand building label to overhanging facade elements via 3-D voxel LCC.
+
+        Container: points with height above ground >= facade_floor that are
+        either unlabeled (0) or already labeled as building.  Components that
+        contain at least one building-labeled point are grown; only currently
+        unlabeled points within those components are relabeled.
+        """
+        coords = np.vstack((points[:, 1], points[:, 0])).T  # Y, X
+        ground_z = self.ground_interpolator(coords)
+        heights = points[:, 2] - ground_z
+
+        container_mask = (
+            (heights >= self.facade_floor)
+            & ~np.isnan(ground_z)
+            & ((labels == 0) | (labels == self.label))
+        )
+        container_idx = np.where(container_mask)[0]
+        if len(container_idx) < 2:
+            return labels
+
+        lcc = LabelConnectedComp(
+            grid_size=self.facade_grid_size,
+            min_component_size=self.facade_min_comp,
+        )
+        comp_labels = lcc.get_components(points[container_idx])
+
+        # Seed: components touching already-labeled building points
+        seed_comps = set(comp_labels[labels[container_idx] == self.label]) - {-1}
+        if not seed_comps:
+            return labels
+
+        # Grow into unlabeled points in seeded components only
+        grow_mask = (
+            np.isin(comp_labels, list(seed_comps))
+            & (labels[container_idx] == 0)
+        )
+        n_added = int(grow_mask.sum())
+        labels[container_idx[grow_mask]] = self.label
+        logger.info(f"NPZAHNFuser facade grow: {n_added} points added.")
+        return labels
 
     def get_labels(self, points, labels, mask, tilecode):
         if np.count_nonzero(mask) == 0:
@@ -103,4 +179,8 @@ class NPZAHNFuser:
         labels[labels_masked] = self.label
 
         logger.info(f"NPZAHNFuser ({self.target}): {np.count_nonzero(final_mask)} points labeled.")
+
+        if self.grow_facade:
+            labels = self._grow_facade(points, labels)
+
         return labels

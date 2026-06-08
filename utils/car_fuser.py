@@ -80,8 +80,8 @@ class CarFuser:
         'max_width':         2.5,
         'min_length':        3.0,   # parallel parking: full car length visible
         'max_length':        6.0,
-        'min_partial_length': 0.8,  # perpendicular: only front/back face visible
-        'park_proximity':    4.0,   # metres to parkeervak for near-pass
+        'min_partial_length': 1.2,  # perpendicular: min visible depth (raised from 0.8 to avoid labeling people)
+        'park_proximity':    2.5,   # metres to parkeervak for near-pass (tightened from 4.0)
     }
 
     def __init__(self, label, bgt_poly_reader, ahn_reader=None,
