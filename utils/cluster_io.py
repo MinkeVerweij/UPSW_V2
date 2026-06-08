@@ -46,7 +46,7 @@ def extract_and_save_clusters(
     min_voxels=DBSCAN_MIN_VOXELS,
     height_threshold=HEIGHT_THRESHOLD,
     min_area=MIN_AREA,
-    max_area=MAX_AREA,
+    max_area=float('inf'),
     max_start_height=2.0,
     exclude_classes=None,
     verbose=True,
@@ -69,6 +69,10 @@ def extract_and_save_clusters(
     review_thresh : float
         Fraction below which the cluster is flagged as needing manual review
         even if a dominant label exists.
+    max_area : float (default inf)
+        No upper area cap by default — large clusters (building facade
+        fragments, long walls) are kept and can be manually reviewed or
+        filtered downstream.  Pass an explicit value to reinstate the cap.
     max_start_height : float (default 2.0 m)
         Clusters whose *lowest* point is above this height above AHN ground
         are discarded.  Removes rooftop fragments and high overhangs that
