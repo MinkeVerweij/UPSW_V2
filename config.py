@@ -4,8 +4,26 @@ Device-specific path configuration.
 Edit the block matching your device's hostname to point at the correct data
 directories. All notebooks import from here instead of hardcoding paths.
 """
+import re
 import socket
 from pathlib import Path
+
+
+def tilecodes_in_dir(directory, pattern="*.laz"):
+    """Return sorted list of tilecodes found in *directory*.
+
+    Scans for files matching *pattern* and extracts the tilecode
+    (``XXXXXX_YYYYYY``) from each filename.  Files whose names don't
+    contain a tilecode are silently skipped.
+    """
+    tc_re = re.compile(r'(\d{6}_\d{6})')
+    codes = sorted({
+        m.group(1)
+        for p in Path(directory).rglob(pattern)
+        for m in [tc_re.search(p.stem)]
+        if m
+    })
+    return codes
 
 HOSTNAME = socket.gethostname()
 

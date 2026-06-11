@@ -9,7 +9,9 @@ class Labels:
     ROAD = 1
     GROUND = 9
     BUILDING = 10
+    FACADE = 11
     TREE = 30
+    OTHER_VEGETATION = 39
     CAR = 40
     BICYCLE = 44
     SCOOTER = 45
@@ -38,7 +40,7 @@ class Labels:
         2: 'Sidewalk',
         9: 'Other ground',
         10: 'Building',
-        11: 'Wall',
+        11: 'Facade',
         12: 'Fence',
         13: 'Houseboat',
         14: 'Bridge',
