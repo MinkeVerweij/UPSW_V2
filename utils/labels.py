@@ -10,6 +10,7 @@ class Labels:
     GROUND = 9
     BUILDING = 10
     FACADE = 11
+    BUS_SHELTER = 15
     TREE = 30
     OTHER_VEGETATION = 39
     CAR = 40
