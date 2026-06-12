@@ -233,6 +233,8 @@ class CableFuser:
 
     def _candidate_cable_points(self, points, voxel_size, radius,
                                  linearity_thres, max_angle):
+        if len(points) == 0:
+            return np.zeros(0, dtype=bool), np.zeros((0, 3), dtype=np.float64)
         if voxel_size is not None:
             _, voxel_centers, inv_voxel_idx = voxelize(points, voxel_size)
             candidate_mask, principal_axis = self._neighborhood_analysis(
