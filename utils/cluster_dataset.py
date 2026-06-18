@@ -123,10 +123,10 @@ class ClusterDataset(Dataset):
         torch.nn.CrossEntropyLoss(weight=...).  One weight per class,
         ordered by class_idx.
         """
-        n_classes = len(self.label_map)
+        n_classes = len(set(self.label_map.values()))
         counts    = np.zeros(n_classes, dtype=np.float32)
         for code, idx in self.label_map.items():
-            counts[idx] = float((self.df['final_label'] == code).sum())
+            counts[idx] += float((self.df['final_label'] == code).sum())
         counts = np.maximum(counts, 1.0)
         weights = 1.0 / counts
         weights = weights / weights.sum() * n_classes
