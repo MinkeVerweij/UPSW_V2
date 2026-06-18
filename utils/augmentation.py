@@ -84,6 +84,5 @@ def default_train_augmentation():
         random_flip_x,
         random_jitter,
         random_scale,
-        random_drop_points,
         random_color_jitter,
     ])
