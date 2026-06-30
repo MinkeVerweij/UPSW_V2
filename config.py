@@ -40,8 +40,9 @@ if HOSTNAME == "external-device":
     OSM_DIR      = Path("/mnt/storage/osm")
     TERRAS_DIR   = Path("/mnt/storage/terras")
     BBOX_DIR     = Path("/mnt/storage/bbox_polygons")
-    LABELED_DIR  = Path("/mnt/storage/labeled_pointcloud")
-    CLUSTERS_DIR = Path("/mnt/storage/clusters")
+    LABELED_DIR   = Path("/mnt/storage/labeled_pointcloud")
+    OBSTACLES_DIR = Path("/mnt/storage/obstacles")
+    CLUSTERS_DIR  = Path("/mnt/storage/clusters")
     DATASET_DIR  = Path("/mnt/storage/dataset")
     MODELS_DIR   = Path("/mnt/storage/models")
 
@@ -57,8 +58,9 @@ else:
     OSM_DIR      = Path("data/input/osm")
     TERRAS_DIR   = Path("data/input/terras")
     BBOX_DIR     = Path("data/input/bbox_polygons")
-    LABELED_DIR  = Path("data/output/labeled_pointcloud")
-    CLUSTERS_DIR = Path("data/output/clusters")
+    LABELED_DIR   = Path("data/output/labeled_pointcloud")
+    OBSTACLES_DIR = Path("data/output/obstacles")
+    CLUSTERS_DIR  = Path("data/output/clusters")
     DATASET_DIR  = Path("data/output/dataset")
     MODELS_DIR   = Path("data/models")
 
@@ -82,43 +84,43 @@ SETUP_TILECODES = [
     "121500_484900",
     "121100_485300",
     "121500_485300",
-    # ── New (to label) ─────────────────────────────────────────────────────────
-    # West Amsterdam
-    "118300_489700",
-    "118700_489300",
-    "118300_490100",
-    # Jordaan north / Haarlemmerbuurt
-    "119500_488900",
-    "119500_490100",
-    "119900_490100",
-    "120300_490100",
-    # De Pijp / Oud-Zuid south
-    "121100_483300",
-    "121100_484100",
-    "121100_484500",
-    "121500_484100",
-    "121900_483700",
-    "121900_484900",
-    "121900_485300",
-    "122300_483300",
-    "122300_484100",
-    "122300_484500",
-    "122700_484900",
-    "122700_485700",
-    # Oost / Plantage
-    "122300_486900",
-    "122700_487700",
-    "123100_487300",
-    "123100_487700",
-    "123100_488100",
-    "123100_488500",
-    "123500_487700",
-    "123500_488100",
-    "123500_488500",
-    "124300_486100",
-    "124300_487300",
-    "124300_487700",
-    "124700_486500",
-    "124700_487700",
-    "125100_487700",
+    # # ── New (to label) ─────────────────────────────────────────────────────────
+    # # West Amsterdam
+    # "118300_489700",
+    # "118700_489300",
+    # "118300_490100",
+    # # Jordaan north / Haarlemmerbuurt
+    # "119500_488900",
+    # "119500_490100",
+    # "119900_490100",
+    # "120300_490100",
+    # # De Pijp / Oud-Zuid south
+    # "121100_483300",
+    # "121100_484100",
+    # "121100_484500",
+    # "121500_484100",
+    # "121900_483700",
+    # "121900_484900",
+    # "121900_485300",
+    # "122300_483300",
+    # "122300_484100",
+    # "122300_484500",
+    # "122700_484900",
+    # "122700_485700",
+    # # Oost / Plantage
+    # "122300_486900",
+    # "122700_487700",
+    # "123100_487300",
+    # "123100_487700",
+    # "123100_488100",
+    # "123100_488500",
+    # "123500_487700",
+    # "123500_488100",
+    # "123500_488500",
+    # "124300_486100",
+    # "124300_487300",
+    # "124300_487700",
+    # "124700_486500",
+    # "124700_487700",
+    # "125100_487700",
 ]
