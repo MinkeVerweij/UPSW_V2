@@ -131,6 +131,9 @@ def clusters_to_concave_polygons(clusters, crs ,alpha=0.2):
         if len(xy) < 10:
             continue
 
+        if np.unique(xy[:, 0]).size < 2 or np.unique(xy[:, 1]).size < 2:
+            continue
+
         poly = alphashape.alphashape(xy, alpha)
 
         if poly.is_valid:
