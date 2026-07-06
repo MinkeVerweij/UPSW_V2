@@ -18,6 +18,8 @@ datashader
 numba
 pyntcloud
 timm
+pillow
+ultralytics
 
 # PyTorch — install separately; pick the right CUDA build for your system:
 # CPU only:       pip install torch
