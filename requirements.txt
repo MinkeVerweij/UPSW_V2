@@ -20,6 +20,7 @@ pyntcloud
 timm
 pillow
 ultralytics
+osmnx
 
 # PyTorch — install separately; pick the right CUDA build for your system:
 # CPU only:       pip install torch
