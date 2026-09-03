@@ -114,9 +114,9 @@ class BGTStreetFurnitureFuser:
                                     min_height, max_height,
                                     min_width, max_width,
                                     min_length, max_length):
-        furniture_mask = np.zeros(len(points), dtype=bool)
-        object_count = 0
-
+        # Pass 1: every component that independently passes the height/shape
+        # filter, regardless of BGT proximity yet -- the candidate pool.
+        candidates = []  # list of (cc_mask, centre)
         for cc in set(np.unique(components)).difference((-1,)):
             cc_mask = components == cc
             valid_z = ground_z[cc_mask]
@@ -140,11 +140,41 @@ class BGTStreetFurnitureFuser:
                     and min_length < length < max_length):
                 continue
 
-            for bp in bgt_points:
-                if np.linalg.norm(np.array(bp) - centre) <= self.max_dist:
-                    furniture_mask[cc_mask] = True
-                    object_count += 1
-                    break
+            candidates.append((cc_mask, centre))
+
+        # Pass 2: one-to-one assignment between BGT points and candidate
+        # components. A row of 2+ real objects close together (e.g. several
+        # waste streams sharing one enclosure, each with its own BGT point)
+        # previously let multiple BGT points all claim whichever component
+        # happened to be checked first, or left a real second component
+        # unmatched -- there was no bookkeeping preventing either. Instead,
+        # collect every (BGT point, component) pair within max_dist, sort
+        # by distance, and greedily claim pairs nearest-first, skipping a
+        # pair once either side is already claimed. This gives each nearby
+        # BGT point its own distinct component when enough real, separate
+        # ones exist, and correctly leaves a BGT point unmatched (rather
+        # than double-claiming) when only one physical object is actually
+        # there for two nearby BGT records.
+        pairs = []
+        for bp in bgt_points:
+            bp_arr = np.array(bp)
+            for ci, (_, centre) in enumerate(candidates):
+                dist = np.linalg.norm(bp_arr - centre)
+                if dist <= self.max_dist:
+                    pairs.append((dist, tuple(bp), ci))
+        pairs.sort(key=lambda p: p[0])
+
+        furniture_mask = np.zeros(len(points), dtype=bool)
+        claimed_components, claimed_bgt = set(), set()
+        object_count = 0
+        for dist, bp_key, ci in pairs:
+            if ci in claimed_components or bp_key in claimed_bgt:
+                continue
+            cc_mask, _ = candidates[ci]
+            furniture_mask[cc_mask] = True
+            claimed_components.add(ci)
+            claimed_bgt.add(bp_key)
+            object_count += 1
 
         logger.debug(f'{object_count} {self.bgt_type} objects labelled.')
         return furniture_mask

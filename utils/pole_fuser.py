@@ -42,7 +42,11 @@ class BGTPoleFuser:
         Half-width of the search box around each BGT location.
     ``max_dist`` (1.2 m)
         Maximum horizontal distance between the BGT location and the
-        detected cluster centre to count as a match.
+        detected cluster centre to count as a match. Used both to accept
+        the coarse candidate column and (forwarded to _find_point_cluster)
+        the fine-grained trunk/pole cluster within it — it was previously
+        only applied to the coarse step, with the fine step silently using
+        an unrelated hardcoded 0.1m default that almost never matched.
     ``voxel_res`` (0.2 m)
         Voxel resolution for the column-height analysis.
     ``seed_height`` (1.75 m)
@@ -52,8 +56,20 @@ class BGTPoleFuser:
         Minimum column height for a voxel column to be a candidate.
     ``max_r`` (0.5 m)
         Maximum radius of a candidate cluster.
-    ``min_points`` (500)
-        Minimum points in a voxel column to be considered.
+    ``min_points`` (5)
+        Minimum points in a voxel column to be considered. Real lamp posts
+        and trees were measured (on the 0.08m pre-fusion downsampled 2025
+        clouds) reaching 63-272 and 3-230 points/column respectively — this
+        just needs to clear stray-noise columns, since `min_height` and the
+        med_mid shape check already reject anything that isn't a genuine
+        vertical column.
+    ``cluster_eps`` (0.15 m)
+        DBSCAN neighbourhood radius used to find the fine-grained trunk/pole
+        cluster at seed_height, once a candidate column has passed the
+        min_points/min_height checks. Must be comfortably larger than the
+        point spacing produced by pre-fusion voxel downsampling (0.08m as of
+        writing) — an eps at or below that spacing (the previous hardcoded
+        0.05m) frequently finds zero neighbours and misses real objects.
     ``z_min`` (0.2 m)
         Minimum height above ground for the search box.
     ``z_max`` (2.7 m)
@@ -88,7 +104,8 @@ class BGTPoleFuser:
         'seed_height': 1.75,
         'min_height': 2.0,
         'max_r': 0.5,
-        'min_points': 500,
+        'min_points': 5,
+        'cluster_eps': 0.15,
         'z_min': 0.2,
         'z_max': 2.7,
         'r_mult': 1.5,
@@ -118,7 +135,8 @@ class BGTPoleFuser:
 
     def _find_point_cluster(self, points, point, plane_height,
                             plane_buffer=0.1, search_radius=1.0,
-                            max_dist=0.1, min_points=1, max_r=0.5):
+                            max_dist=0.1, min_points=1, max_r=0.5,
+                            cluster_eps=0.15):
         """Find a cluster near ``point`` at ``plane_height``."""
         search_ids = np.where(
             clipping_tools.cylinder_clip(
@@ -129,7 +147,7 @@ class BGTPoleFuser:
         if len(search_ids) < min_points:
             return []
 
-        clustering = DBSCAN(eps=0.05, min_samples=5, p=2).fit(
+        clustering = DBSCAN(eps=cluster_eps, min_samples=5, p=2).fit(
             points[search_ids])
         noise_mask = clustering.labels_ != -1
         cc_labels, counts = np.unique(clustering.labels_, return_counts=True)
@@ -151,7 +169,8 @@ class BGTPoleFuser:
 
     def _find_seeds(self, points, point_objects, fast_z,
                     search_pad, max_dist, voxel_res, seed_height,
-                    min_height, min_points, max_r, z_min, z_max, **_):
+                    min_height, min_points, max_r, z_min, z_max,
+                    cluster_eps=0.15, **_):
         """Locate seed clusters matching each BGT location."""
         seeds = []
         matches = {}
@@ -207,7 +226,8 @@ class BGTPoleFuser:
 
             if min(dists) <= max_dist:
                 clusters = self._find_point_cluster(
-                    points, c_prime, ground_z + seed_height, max_r=max_r)
+                    points, c_prime, ground_z + seed_height,
+                    max_r=max_r, max_dist=max_dist, cluster_eps=cluster_eps)
                 if clusters:
                     seed = clusters[0]
                     seeds.append(seed)

@@ -17,6 +17,9 @@ import geopandas as gpd
 from shapely.geometry import LineString, Point, MultiLineString
 from shapely.ops import unary_union, split, nearest_points
 
+from .obstacle_classifier import _BGT_PERMANENCE
+from .detection import COCO_TO_UPSW
+
 logger = logging.getLogger(__name__)
 
 _PDOK_BGT_URL = (
@@ -105,7 +108,7 @@ def fetch_voetpad_polygons(bbox_rd, page_size=200):
 # ---------------------------------------------------------------------------
 
 def obstacle_footprints_from_inventory(cluster_inventory_df, clusters_dir,
-                                       buffer_m=0.15):
+                                       buffer_m=0.15, permanence=None):
     """
     Build obstacle footprint polygons from cluster inventory NPZ files.
 
@@ -121,6 +124,10 @@ def obstacle_footprints_from_inventory(cluster_inventory_df, clusters_dir,
         Root of the cluster NPZ directory.
     buffer_m : float
         Extra buffer around each footprint (metres).
+    permanence : {'permanent', 'temporary', None}
+        When set, restrict to labels classified as that permanence in
+        ``_BGT_PERMANENCE`` (unmapped labels default to 'permanent').
+        ``None`` keeps all obstacle labels (previous behaviour).
 
     Returns
     -------
@@ -129,7 +136,11 @@ def obstacle_footprints_from_inventory(cluster_inventory_df, clusters_dir,
     """
     inv = cluster_inventory_df.copy()
     label_col = "final_label" if "final_label" in inv.columns else "auto_label"
-    inv = inv[inv[label_col].isin(OBSTACLE_LABELS)].reset_index(drop=True)
+    labels = OBSTACLE_LABELS
+    if permanence is not None:
+        labels = {l for l in labels
+                  if _BGT_PERMANENCE.get(l, 'permanent') == permanence}
+    inv = inv[inv[label_col].isin(labels)].reset_index(drop=True)
 
     rows = []
     for _, row in inv.iterrows():
@@ -146,6 +157,52 @@ def obstacle_footprints_from_inventory(cluster_inventory_df, clusters_dir,
         return gpd.GeoDataFrame(columns=["cluster_id", "label", "geometry"],
                                 crs="EPSG:28992")
     return gpd.GeoDataFrame(rows, crs="EPSG:28992")
+
+
+def panorama_obstacle_footprints(detections_gdf, permanence=None, buffer_m=0.3):
+    """
+    Build obstacle footprint polygons from panorama (YOLO) detections.
+
+    Buffers each detection's ground point by ``buffer_m`` to approximate a
+    footprint, tagged with its UPSW label via ``COCO_TO_UPSW``.
+
+    Parameters
+    ----------
+    detections_gdf : GeoDataFrame
+        Panorama detections (EPSG:28992) with a ``class_name`` column
+        (COCO class name) and Point geometry.
+    permanence : {'permanent', 'temporary', None}
+        When set, restrict to COCO classes whose mapped UPSW label is
+        classified as that permanence in ``_BGT_PERMANENCE`` (unmapped
+        labels default to 'permanent'). ``None`` keeps all detections.
+    buffer_m : float
+        Buffer radius around each detection point (metres).
+
+    Returns
+    -------
+    GeoDataFrame with columns: cluster_id, label, geometry (Polygon)
+        CRS: EPSG:28992
+    """
+    if detections_gdf is None or len(detections_gdf) == 0:
+        return gpd.GeoDataFrame(columns=["cluster_id", "label", "geometry"],
+                                crs="EPSG:28992")
+
+    det = detections_gdf.copy()
+    mapped = det["class_name"].map(COCO_TO_UPSW)
+    det["label"] = det["upsw_label"] if "upsw_label" in det.columns else mapped
+    det["label"] = pd.to_numeric(det["label"], errors="coerce").combine_first(
+        pd.to_numeric(mapped, errors="coerce"))
+    det = det[det["label"].notna()].copy()
+    det["label"] = det["label"].astype(int)
+
+    if permanence is not None:
+        det = det[det["label"].apply(
+            lambda l: _BGT_PERMANENCE.get(l, 'permanent') == permanence)]
+
+    det = det.reset_index(drop=True)
+    det["cluster_id"] = "pano_" + det.index.astype(str)
+    det["geometry"] = det.geometry.buffer(buffer_m)
+    return det[["cluster_id", "label", "geometry"]]
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +316,7 @@ def compute_usable_width(voetpad_gdf, obstacles_gdf, step_m=0.5):
     -------
     GeoDataFrame with columns:
         geometry (LineString segment between measurement points),
-        width_total_m, width_usable_m, n_obstacles
+        width_total_m, width_usable_m, n_obstacles, voetpad_idx, dist_m
         CRS: EPSG:28992
     """
     if obstacles_gdf is not None and len(obstacles_gdf) > 0:
@@ -268,7 +325,7 @@ def compute_usable_width(voetpad_gdf, obstacles_gdf, step_m=0.5):
         obstacles_union = None
 
     rows = []
-    for _, voetpad in voetpad_gdf.iterrows():
+    for voetpad_idx, voetpad in voetpad_gdf.iterrows():
         poly = voetpad.geometry
         if poly is None or poly.is_empty:
             continue
@@ -316,6 +373,8 @@ def compute_usable_width(voetpad_gdf, obstacles_gdf, step_m=0.5):
                     "width_total_m": round(avg_total, 3),
                     "width_usable_m": round(avg_usable, 3),
                     "n_obstacles": n_obs,
+                    "voetpad_idx": voetpad_idx,
+                    "dist_m": round(float(dist), 3),
                 })
 
             prev_point = pt
@@ -324,10 +383,76 @@ def compute_usable_width(voetpad_gdf, obstacles_gdf, step_m=0.5):
 
     if not rows:
         return gpd.GeoDataFrame(
-            columns=["geometry", "width_total_m", "width_usable_m", "n_obstacles"],
+            columns=["geometry", "width_total_m", "width_usable_m", "n_obstacles",
+                     "voetpad_idx", "dist_m"],
             crs="EPSG:28992",
         )
     return gpd.GeoDataFrame(rows, crs="EPSG:28992")
+
+
+def compute_typical_observed_width(voetpad_gdf, permanent_obstacles_gdf,
+                                    epoch_obstacles_list, step_m=0.5):
+    """
+    Compute a typical/observed usable width by combining a fixed permanent
+    obstacle layer with several epochs of temporary (panorama) obstacles.
+
+    For each epoch, permanent + that epoch's temporary obstacles are
+    combined and passed through :func:`compute_usable_width`. Per
+    cross-section point (matched across epochs via ``voetpad_idx``/
+    ``dist_m``, which are deterministic for a fixed ``voetpad_gdf``/
+    ``step_m``), the *median* usable width across epochs is taken as the
+    typical value — so a one-off obstacle in a single epoch doesn't dominate,
+    but recurring clutter does.
+
+    Parameters
+    ----------
+    voetpad_gdf : GeoDataFrame
+        BGT voetpad polygons (EPSG:28992).
+    permanent_obstacles_gdf : GeoDataFrame
+        Permanent obstacle footprints, included in every epoch.
+    epoch_obstacles_list : list[GeoDataFrame]
+        One GeoDataFrame of temporary obstacle footprints per panorama
+        epoch (e.g. one per mission_year).
+    step_m : float
+        Interval between cross-section measurements in metres.
+
+    Returns
+    -------
+    GeoDataFrame with columns:
+        geometry, width_total_m, width_usable_typical_m, n_epochs_clutter,
+        n_epochs, voetpad_idx, dist_m
+        CRS: EPSG:28992
+    """
+    if not epoch_obstacles_list:
+        epoch_obstacles_list = [None]
+
+    per_epoch = []
+    for temp_gdf in epoch_obstacles_list:
+        parts = [permanent_obstacles_gdf] if permanent_obstacles_gdf is not None else []
+        if temp_gdf is not None and len(temp_gdf) > 0:
+            parts.append(temp_gdf)
+        combined = (gpd.GeoDataFrame(pd.concat(parts, ignore_index=True),
+                                      crs="EPSG:28992")
+                    if parts else None)
+        per_epoch.append(compute_usable_width(voetpad_gdf, combined, step_m))
+
+    base = per_epoch[0][["geometry", "width_total_m", "voetpad_idx", "dist_m"]].copy()
+    key = base.set_index(["voetpad_idx", "dist_m"]).index
+    usable_matrix = np.column_stack([
+        epoch_df.set_index(["voetpad_idx", "dist_m"])
+                .reindex(key)["width_usable_m"].values
+        for epoch_df in per_epoch
+    ])
+    n_obstacles_matrix = np.column_stack([
+        epoch_df.set_index(["voetpad_idx", "dist_m"])
+                .reindex(key)["n_obstacles"].values
+        for epoch_df in per_epoch
+    ])
+
+    base["width_usable_typical_m"] = np.round(np.nanmedian(usable_matrix, axis=1), 3)
+    base["n_epochs_clutter"] = np.nansum(n_obstacles_matrix > 0, axis=1).astype(int)
+    base["n_epochs"] = len(per_epoch)
+    return base
 
 
 def width_to_geojson(width_gdf, out_path):

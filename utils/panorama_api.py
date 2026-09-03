@@ -61,10 +61,25 @@ def fetch_panoramas_near(lon, lat, radius_m=50, max_results=5, mission_year=None
     if mission_year is not None:
         params["tags"] = f"mission-{mission_year}"
 
-    resp = requests.get(_BASE_URL, params=params, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    return data.get("_embedded", {}).get("panoramas", [])
+    # The API silently caps each response to a server-side page size (observed
+    # 25) regardless of the requested `limit` — a tile with two overlapping
+    # driving passes can have 100+ panoramas within radius_m, and without
+    # following `_links.next` only the closest-to-`(lon,lat)` page ever comes
+    # back, silently starving coverage on the far side of the tile (confirmed:
+    # a viaduct-side streetlight whose nearest actual panorama was 4.9m away
+    # got matched to a cached one 72m away, because an entire second capture
+    # date never made it past page 1).
+    panoramas = []
+    url, req_params = _BASE_URL, params
+    while url and len(panoramas) < max_results:
+        resp = requests.get(url, params=req_params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        panoramas.extend(data.get("_embedded", {}).get("panoramas", []))
+        next_link = data.get("_links", {}).get("next")
+        url = next_link.get("href") if next_link else None
+        req_params = None  # the next href already carries all query params
+    return panoramas[:max_results]
 
 
 def _infer_heading_from_neighbors(pano_id, lon, lat):
@@ -304,10 +319,11 @@ def _thin_panoramas(pano_dicts, min_spacing_m):
 
 
 def fetch_panoramas_in_tile(tilecode, bbox_dir, mission_year=2024,
-                             min_spacing_m=15.0):
+                             min_spacing_m=15.0, buffer_m=0.0):
     """
     Fetch all panoramas whose camera position falls inside the tile's
-    LiDAR point cloud footprint, then thin them spatially.
+    LiDAR point cloud footprint (optionally expanded by *buffer_m*), then
+    thin them spatially.
 
     Parameters
     ----------
@@ -319,6 +335,14 @@ def fetch_panoramas_in_tile(tilecode, bbox_dir, mission_year=2024,
         Year filter (uses ``tags=mission-<year>``).  Pass None for any year.
     min_spacing_m : float
         Minimum distance between returned panoramas (metres).
+    buffer_m : float
+        Grow the tile polygon by this many metres before testing camera
+        positions against it. Panoramas are 360° equirectangular images, so
+        a camera just outside the tile boundary can still see everything
+        inside it — restricting to strictly-inside cameras (buffer_m=0, the
+        historical default) starves multi-camera triangulation of viewing
+        angles, since most tiles then only contain a handful of cameras
+        clustered along whatever short street segment crosses the tile.
 
     Returns
     -------
@@ -326,11 +350,13 @@ def fetch_panoramas_in_tile(tilecode, bbox_dir, mission_year=2024,
     ``"tilecode"`` added.
     """
     tile_poly = _tile_polygon(tilecode, bbox_dir)
+    search_poly = tile_poly.buffer(buffer_m) if buffer_m else tile_poly
     centroid = tile_poly.centroid
     cx_rd, cy_rd = centroid.x, centroid.y
 
-    # Circumradius: large enough to cover the whole tile from its centroid
-    verts = np.array(tile_poly.exterior.coords)
+    # Circumradius: large enough to cover the whole (buffered) search area
+    # from the tile's centroid.
+    verts = np.array(search_poly.exterior.coords)
     radius_m = float(np.hypot(verts[:, 0] - cx_rd,
                                verts[:, 1] - cy_rd).max()) + 5
 
@@ -342,12 +368,12 @@ def fetch_panoramas_in_tile(tilecode, bbox_dir, mission_year=2024,
         logger.warning(f"{tilecode}: no {mission_year} panoramas — retrying without year filter.")
         panos = fetch_panoramas_near(c_lon, c_lat, radius_m=radius_m, max_results=500)
 
-    # Keep only those whose camera position is inside the tile polygon
+    # Keep only those whose camera position is inside the (buffered) tile polygon
     inside = []
     for p in panos:
         lon, lat = p["geometry"]["coordinates"][:2]
         x_rd, y_rd = wgs84_to_rd(lon, lat)
-        if tile_poly.contains(Point(x_rd, y_rd)):
+        if search_poly.contains(Point(x_rd, y_rd)):
             inside.append(p)
 
     if not inside:

@@ -26,9 +26,23 @@ UNKNOWN_LABEL    = 0     # keep only points with this label; everything else is 
 HEIGHT_THRESHOLD = 0.25          # m above ground to be an obstacle candidate
 GROUND_GRID_SIZE = 0.5           # m, resolution of the ground-height raster
 VOXEL_2D         = 0.25          # m, 2-D footprint voxel side length
-DBSCAN_EPS       = 0.6           # m, DBSCAN neighbourhood radius
+DBSCAN_EPS       = 0.3           # m, DBSCAN neighbourhood radius -- lowered from 0.6:
+                                  # at 0.6 a whole row of bikes commonly chain-merged
+                                  # with unrelated nearby furniture (a bench, a tree
+                                  # trunk) into one cluster since consecutive voxels
+                                  # need only be within 0.6m to link, transitively,
+                                  # across the whole row. 0.3 tested on tile
+                                  # 120300_489300: 138 clusters vs. 47 at 0.6, visibly
+                                  # more distinct boundaries between separate objects.
 DBSCAN_MIN_VOXELS = 5            # minimum occupied voxels for a cluster
-MIN_AREA         = 0.2           # m², post-clustering area filter (lower bound)
+MIN_AREA         = 0.0           # m², post-clustering area filter (lower bound) --
+                                  # disabled (was 0.2): checked 717 clusters dropped
+                                  # for area alone across 5 tiles and found up to 507
+                                  # points among them (median 30) -- exactly what a
+                                  # thin vertical object (bollard, sign post) looks
+                                  # like: dense point column, near-zero footprint area.
+                                  # MIN_PTS (utils/cluster_io.py) now does the real
+                                  # noise filtering instead.
 MAX_AREA         = 40.0          # m², post-clustering area filter (upper bound)
 
 

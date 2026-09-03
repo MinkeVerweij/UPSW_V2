@@ -130,6 +130,7 @@ def minimum_bounding_rectangle(points):
 
     return min_bounding_rect, hull_points, min(dims), max(dims), center_point
 
+@jit(nopython=True, cache=True)
 def _point_inside_poly(polygon, point):
     """
     Improved version of the Crossing Number algorithm that checks if a point is
@@ -176,6 +177,7 @@ def _point_inside_poly(polygon, point):
 
     return intersections & 1
 
+@jit(nopython=True, cache=True, parallel=True)
 def is_inside(x, y, polygon):
     """
     Checks for each point in a list whether that point is inside a polygon.

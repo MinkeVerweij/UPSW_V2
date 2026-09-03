@@ -89,6 +89,70 @@ def crop_laz_with_polygon(input_file: Path, output_file: Path, polygon: Polygon)
 
     return count
 
+def voxel_downsample_las(in_path: Path, out_path: Path, voxel_size: float = 0.15,
+                         chunk_size: int = 5_000_000) -> int:
+    """
+    Voxel-downsample a LAS/LAZ file, keeping one real point per occupied
+    3-D voxel (all point attributes — RGB, gps_time, etc. — are preserved
+    on whichever point is kept, nothing is synthesized).
+
+    Streams through the input in chunks and writes matches immediately, so
+    peak memory stays bounded by `chunk_size` plus the (much smaller) number
+    of voxels kept so far — the full point cloud is never held in memory at
+    once. Needed for dense mobile-mapping tiles (10^8+ points) that don't
+    fit in memory at full resolution.
+
+    Parameters
+    ----------
+    in_path : Path
+        Input LAS/LAZ file.
+    out_path : Path
+        Output LAS/LAZ file (downsampled).
+    voxel_size : float
+        Voxel edge length in metres.
+    chunk_size : int
+        Points read per chunk.
+
+    Returns
+    -------
+    int
+        Number of points written.
+    """
+    with laspy.open(in_path) as reader:
+        header = reader.header
+        mins, maxs = header.mins, header.maxs
+
+        x_off = int(np.floor(mins[0] / voxel_size))
+        y_off = int(np.floor(mins[1] / voxel_size))
+        z_off = int(np.floor(mins[2] / voxel_size))
+        y_span = int(np.ceil((maxs[1] - mins[1]) / voxel_size)) + 2
+        z_span = int(np.ceil((maxs[2] - mins[2]) / voxel_size)) + 2
+
+        seen = set()
+        n_written = 0
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with laspy.open(out_path, mode='w', header=header) as writer:
+            for chunk in reader.chunk_iterator(chunk_size):
+                x_idx = np.floor(np.asarray(chunk.x) / voxel_size).astype(np.int64) - x_off
+                y_idx = np.floor(np.asarray(chunk.y) / voxel_size).astype(np.int64) - y_off
+                z_idx = np.floor(np.asarray(chunk.z) / voxel_size).astype(np.int64) - z_off
+                keys = (x_idx * y_span + y_idx) * z_span + z_idx
+
+                # First occurrence of each key within this chunk (vectorized),
+                # then drop any already written by an earlier chunk.
+                uniq_keys, first_idx = np.unique(keys, return_index=True)
+                new_mask = np.array([k not in seen for k in uniq_keys])
+                seen.update(uniq_keys[new_mask].tolist())
+                keep_idx = first_idx[new_mask]
+
+                if len(keep_idx) > 0:
+                    keep_idx.sort()
+                    writer.write_points(chunk[keep_idx])
+                    n_written += len(keep_idx)
+
+    return n_written
+
+
 def build_convex_hull_polygon(las_path: Path) -> Polygon:
     """
     Reads a LAS/LAZ file and returns a Shapely Polygon
@@ -106,6 +170,16 @@ def build_convex_hull_polygon(las_path: Path) -> Polygon:
 
     if coords.shape[0] < 3:
         raise ValueError(f"Not enough points to compute convex hull: {las_path}")
+
+    # Qhull overflows its internal indexing on very large point counts (seen
+    # around ~10^8 points in dense mobile-mapping tiles). The hull only
+    # depends on the outer boundary points, so a large random subsample gives
+    # the same footprint without hitting that limit.
+    MAX_HULL_POINTS = 2_000_000
+    if coords.shape[0] > MAX_HULL_POINTS:
+        rng = np.random.default_rng(0)
+        idx = rng.choice(coords.shape[0], size=MAX_HULL_POINTS, replace=False)
+        coords = coords[idx]
 
     # Compute convex hull
     hull = ConvexHull(coords)

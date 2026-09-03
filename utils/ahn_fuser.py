@@ -75,28 +75,26 @@ class NPZAHNFuser:
     def _grid_connected_components(self, points_xy):
         """
         Simple grid-based labeling: divide XY plane into grid cells and
-        label connected clusters. Very fast for large clouds.
+        label connected clusters. Fully vectorized (no per-point Python loop),
+        so it stays fast on very large clouds.
         Returns a boolean mask keeping clusters larger than min_comp_size.
         """
         if len(points_xy) == 0:
             return np.zeros(0, dtype=bool)
 
         # Compute grid indices
-        x_idx = np.floor(points_xy[:, 0] / self.grid_size).astype(int)
-        y_idx = np.floor(points_xy[:, 1] / self.grid_size).astype(int)
-        keys = list(zip(x_idx, y_idx))
+        x_idx = np.floor(points_xy[:, 0] / self.grid_size).astype(np.int64)
+        y_idx = np.floor(points_xy[:, 1] / self.grid_size).astype(np.int64)
 
-        # Map grid cells to point indices
-        from collections import defaultdict
-        cell_points = defaultdict(list)
-        for i, key in enumerate(keys):
-            cell_points[key].append(i)
+        # Encode each (x_idx, y_idx) cell as a single int64 key
+        y_span = y_idx.max() - y_idx.min() + 1
+        keys = (x_idx - x_idx.min()) * y_span + (y_idx - y_idx.min())
 
-        # Identify clusters
-        cluster_mask = np.zeros(len(points_xy), dtype=bool)
-        for indices in cell_points.values():
-            if len(indices) >= self.min_comp_size:
-                cluster_mask[indices] = True
+        # Count points per grid cell, then broadcast each point's cell count
+        # back to it — equivalent to the old "group indices by cell, keep
+        # groups >= min_comp_size" logic, but vectorized.
+        _, inverse, counts = np.unique(keys, return_inverse=True, return_counts=True)
+        cluster_mask = counts[inverse] >= self.min_comp_size
         return cluster_mask
 
     def _grow_facade(self, points, labels):

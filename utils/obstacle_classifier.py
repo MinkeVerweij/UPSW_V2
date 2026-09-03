@@ -34,6 +34,10 @@ _BGT_PERMANENCE = {
     Labels.RUBBISH_BIN:     'permanent',
     Labels.LARGE_CONTAINER: 'permanent',
     Labels.BICYCLE_RACK:    'permanent',
+    Labels.BICYCLE:         'temporary',
+    Labels.SCOOTER:         'temporary',
+    Labels.MULTI_BIKE:      'temporary',
+    Labels.BIKE_ON_POLE:    'temporary',
 }
 
 # Must match obstacles_utils.py

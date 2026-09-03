@@ -32,7 +32,73 @@ from utils.obstacle_extractor_2d import (
 from utils.labels import Labels
 
 
-MIN_PTS = 10  # minimum raw points to keep a cluster
+MIN_PTS = 30  # minimum raw points to keep a cluster -- raised from 10 now that
+# MIN_AREA is disabled (see utils/obstacle_extractor_2d.py) and this is the only
+# noise filter left. Checked against every confirmed real single-object cluster
+# (cars, containers, rubbish bins) in the current data: the smallest has 43
+# points, so 30 leaves real margin without evidence it cuts a genuine object.
+HEIGHT_GAP_SPLIT_M = 1.0  # split a cluster at any vertical gap wider than this --
+# checked against every confirmed real single-object cluster in the current
+# data (cars, containers, rubbish bins; trees/streetlights excluded, they go
+# through a separate clustering path). One case (a "Car" cluster with a
+# 1.545m gap) initially looked like a real single-object counter-example,
+# but turned out to be contamination too -- the isolated points above the
+# gap are a hanging cable passing through the same footprint, not part of
+# the car, so that cluster *should* split. With it correctly excluded, the
+# largest legitimate gap in the data is 0.677m (a container); 1.0m gives
+# that real margin while staying far below the 10.57m gap that motivated
+# this feature. Revisit if a genuine single object with a >1m internal gap
+# turns up (e.g. some cars showing hood/roof LiDAR occlusion gaps).
+
+
+def _split_by_height_gap(point_cluster_ids, heights, gap_m=HEIGHT_GAP_SPLIT_M):
+    """
+    Split any 2-D-DBSCAN cluster that contains a vertical gap wider than
+    gap_m into separate height-bands, each becoming its own cluster id.
+
+    The DBSCAN above only ever looks at X/Y footprint (see extract_and_save_
+    clusters below) — height plays no part in deciding what's "the same
+    cluster". That's normally fine (a car's body and its side mirror are
+    both continuously present at multiple heights), but it means a low
+    object growing right against a building and an unrelated facade feature
+    directly above it can end up merged into one cluster despite having
+    nothing between them for meters. Real example: a cluster of points at
+    0.27-1.51m (a small bush) then nothing until 12.08m (a balcony ledge) —
+    a 10.57m gap, vs. every other gap in that same cluster under 0.1m.
+
+    Parameters
+    ----------
+    point_cluster_ids : np.ndarray, shape (N,)
+        Per-point cluster id from DBSCAN (noise points, if any, keep their
+        id < 0 and are left untouched).
+    heights : np.ndarray, shape (N,)
+        Height above ground for the same points.
+    gap_m : float
+        Minimum vertical gap (metres) that triggers a split.
+
+    Returns
+    -------
+    np.ndarray, shape (N,) — new cluster ids, contiguous from the original
+    cluster count upward for each extra height-band created.
+    """
+    new_ids = point_cluster_ids.copy()
+    next_id = int(point_cluster_ids.max()) + 1 if len(point_cluster_ids) else 0
+    for cid in np.unique(point_cluster_ids):
+        if cid < 0:
+            continue
+        idx = np.where(point_cluster_ids == cid)[0]
+        if len(idx) < 2:
+            continue
+        order = idx[np.argsort(heights[idx])]
+        gaps = np.diff(heights[order])
+        split_at = np.where(gaps > gap_m)[0]
+        if len(split_at) == 0:
+            continue
+        bands = np.split(order, split_at + 1)
+        for band in bands[1:]:  # first band keeps the original cid
+            new_ids[band] = next_id
+            next_id += 1
+    return new_ids
 
 
 def extract_and_save_clusters(
@@ -49,6 +115,7 @@ def extract_and_save_clusters(
     max_area=float('inf'),
     max_start_height=2.0,
     exclude_classes=None,
+    height_gap_split_m=HEIGHT_GAP_SPLIT_M,
     verbose=True,
 ):
     """
@@ -85,6 +152,13 @@ def extract_and_save_clusters(
         trees, street lights) so their large point masses don't form
         oversized DBSCAN clusters.
         Default: ``[Labels.TREE, Labels.STREET_LIGHT]``
+    height_gap_split_m : float (default 1.0 m)
+        The 2-D DBSCAN below only looks at X/Y footprint, so a low object
+        against a building and an unrelated facade feature stacked directly
+        above it can land in the same cluster despite a large vertical gap
+        between them. Any cluster with a height gap wider than this gets
+        split into separate clusters at that gap — see _split_by_height_gap.
+        Set to inf to disable.
     verbose : bool
 
     Returns
@@ -171,9 +245,16 @@ def extract_and_save_clusters(
     db = DBSCAN(eps=eps, min_samples=min_voxels, algorithm="ball_tree", n_jobs=-1)
     cell_cluster_ids = db.fit_predict(cell_centers)
     point_cluster_ids = cell_cluster_ids[inverse]
+    n_2d_clusters = int(cell_cluster_ids.max()) + 1
 
-    n_raw_clusters = int(cell_cluster_ids.max()) + 1
-    log(f"  Raw clusters: {n_raw_clusters}")
+    if np.isfinite(height_gap_split_m):
+        point_cluster_ids = _split_by_height_gap(
+            point_cluster_ids, obs_h, gap_m=height_gap_split_m)
+
+    n_raw_clusters = int(point_cluster_ids.max()) + 1
+    n_split = n_raw_clusters - n_2d_clusters
+    log(f"  Raw clusters: {n_2d_clusters}"
+        + (f"  (+{n_split} from height-gap splitting)" if n_split else ""))
 
     # ── save per-cluster NPZs ─────────────────────────────────────────────────
     rows = []
